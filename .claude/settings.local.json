@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(keybindings-help)",
+      "Skill(keybindings-help:*)",
+      "Read(//vscode/**)",
+      "Read(//home/codespace/**)",
+      "Read(//home/**)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(node -e \"const ct = require\\('city-timezones'\\); console.log\\(JSON.stringify\\(ct.lookupViaCity\\('Kyiv'\\)[0]\\)\\)\")",
+      "Bash(node -e \"const ct = require\\('city-timezones'\\); console.log\\(Object.keys\\(ct\\)\\)\")"
+    ],
+    "additionalDirectories": [
+      "/workspaces/codespaces-blank"
+    ]
+  },
+  "enabledPlugins": {
+    "andrej-karpathy-skills@karpathy-skills": true
+  }
+}
