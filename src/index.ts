@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { bot, setupBot } from "./bot";
 import { startReminderScheduler } from "./services/reminder-scheduler";
 
