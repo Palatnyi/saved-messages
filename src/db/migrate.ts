@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { cityMapping } from "city-timezones";
 import { getDb, getClient } from "../db";
+import { encrypt } from "../utils/crypto";
 
 function randomCity(): string {
   const entry = cityMapping[Math.floor(Math.random() * cityMapping.length)];
@@ -24,6 +25,40 @@ async function migrate(): Promise<void> {
     }));
     await db.collection("users").bulkWrite(ops);
     console.log(`Backfilled city for ${users.length} user(s).`);
+  }
+
+  // Seed 5 test reminders for today for each user (for /check_agenda testing)
+  const allUsers = await db.collection("users").find({}).toArray();
+  if (allUsers.length > 0) {
+    const testTasks = [
+      "Buy groceries",
+      "Call dentist",
+      "Send weekly report",
+      "Review pull requests",
+      "Team standup meeting",
+    ];
+
+    const now = new Date();
+    const ops = allUsers.flatMap((user) =>
+      testTasks.map((task, i) => {
+        const remindAt = new Date(now);
+        remindAt.setUTCHours(8 + i * 2, 0, 0, 0); // 08:00, 10:00, 12:00, 14:00, 16:00 UTC
+        return {
+          insertOne: {
+            document: {
+              userId: user._id as unknown as number,
+              encryptedPayload: encrypt(task),
+              remindAt,
+              status: "pending" as const,
+              createdAt: new Date(),
+            },
+          },
+        };
+      })
+    );
+
+    await db.collection("reminders").bulkWrite(ops);
+    console.log(`Seeded 5 test reminders for ${allUsers.length} user(s).`);
   }
 
   console.log("Migration complete.");

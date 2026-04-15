@@ -76,6 +76,25 @@ export async function fetchDueReminders(): Promise<
 }
 
 /**
+ * Returns pending reminders for a user whose remindAt falls within the given UTC window.
+ */
+export async function getTodayReminders(
+  userId: number,
+  startUtc: Date,
+  endUtc: Date
+): Promise<Pick<ReminderDoc, "encryptedPayload" | "remindAt">[]> {
+  const db = await getDb();
+  return db
+    .collection<ReminderDoc>("reminders")
+    .find(
+      { userId, status: "pending", remindAt: { $gte: startUtc, $lte: endUtc } },
+      { projection: { encryptedPayload: 1, remindAt: 1 } }
+    )
+    .sort({ remindAt: 1 })
+    .toArray();
+}
+
+/**
  * Permanently removes a reminder by its ObjectId.
  */
 export async function deleteReminderById(id: ObjectId): Promise<void> {

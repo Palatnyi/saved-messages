@@ -5,6 +5,7 @@ import { type MyContext, type SessionData } from "./context";
 import { pingCommand } from "./commands/ping";
 import { languageCommand, languageCallbackHandler } from "./commands/language";
 import { handleNewMessage, handleReply, handleVoiceMessage } from "./handlers/message";
+import { handleAgendaShow, handleAgendaLater } from "./handlers/agenda";
 import { i18n, loadLocales } from "./i18n";
 import { localeMiddleware } from "./middleware/locale";
 
@@ -31,6 +32,8 @@ export function setupBot(): void {
 
   // ── Callback queries ─────────────────────────────────────────────────────────
   bot.callbackQuery(/^set_lang:/, languageCallbackHandler);
+  bot.callbackQuery("agenda_show", handleAgendaShow);
+  bot.callbackQuery("agenda_later", handleAgendaLater);
 
   // ── Onboarding entry point ───────────────────────────────────────────────────
   bot.callbackQuery("set_city", async (ctx) => {

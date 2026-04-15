@@ -14,5 +14,10 @@
   "no-reminders": "You have no upcoming reminders.",
   "reminders-list": "Your upcoming reminders:",
   "weather-header": "Weather in { $city } { $emoji }",
-  "ai-unavailable": "Sorry, I'm having trouble reaching the AI right now. Please try again in a moment."
+  "ai-unavailable": "Sorry, I'm having trouble reaching the AI right now. Please try again in a moment.",
+  "agenda-nudge": "Good morning! I collected your reminders for today. Want to review them?",
+  "agenda-show-btn": "Yes, show me ✓",
+  "agenda-later-btn": "Maybe later",
+  "agenda-header": "Today's reminders:",
+  "agenda-empty": "Looks like all your reminders for today are already done 🎉"
 }

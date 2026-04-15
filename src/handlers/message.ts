@@ -6,7 +6,8 @@ import { encrypt, decrypt } from "../utils/crypto";
 import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders } from "../db/reminders";
 import { getUserTimezone, getUserLanguageCode, getUserCity } from "../db/users";
 import { languageCommand } from "../commands/language";
-import { CHANGE_TZ_TRIGGER, CHANGE_LANG_TRIGGER, REMINDERS_TRIGGER } from "../triggers";
+import { handleAgendaMessage } from "./agenda";
+import { CHANGE_TZ_TRIGGER, CHANGE_LANG_TRIGGER, REMINDERS_TRIGGER, CHECK_AGENDA_TRIGGER } from "../triggers";
 
 async function getLanguageCode(ctx: MyContext, userId: number): Promise<string> {
   if (ctx.session.__language_code) return ctx.session.__language_code;
@@ -121,6 +122,11 @@ export async function handleNewMessage(ctx: MyContext): Promise<void> {
 
   if (trimmed === REMINDERS_TRIGGER) {
     await handleListMessages(ctx, msg.from!.id);
+    return;
+  }
+
+  if (trimmed === CHECK_AGENDA_TRIGGER) {
+    await handleAgendaMessage(ctx);
     return;
   }
 
