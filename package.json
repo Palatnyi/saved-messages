@@ -9,7 +9,7 @@
     "test": "jest",
     "build": "tsc",
     "start": "node dist/index.js",
-    "delete_all_data": "ts-node src/db/delete_all_data.ts"
+    "dropdb": "ts-node src/db/delete_all_data.ts"
   },
   "keywords": [],
   "author": "",

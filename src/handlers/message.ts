@@ -1,10 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
-import { parseReminder } from "../services/ai";
+import { parseReminder, getWeatherEmoji } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
 import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders } from "../db/reminders";
-import { getUserTimezone, getUserLanguageCode } from "../db/users";
+import { getUserTimezone, getUserLanguageCode, getUserCity } from "../db/users";
 import { languageCommand } from "../commands/language";
 import { CHANGE_TZ_TRIGGER, CHANGE_LANG_TRIGGER, REMINDERS_TRIGGER } from "../triggers";
 
@@ -75,10 +75,11 @@ async function processReminder(
 }
 
 export async function handleListMessages(ctx: MyContext, userId: number): Promise<void> {
-  const [reminders, timezone, languageCode] = await Promise.all([
+  const [reminders, timezone, languageCode, city] = await Promise.all([
     getPendingReminders(userId),
     getUserTimezone(userId),
     getLanguageCode(ctx, userId),
+    getUserCity(userId),
   ]);
 
   if (reminders.length === 0) {
@@ -94,7 +95,13 @@ export async function handleListMessages(ctx: MyContext, userId: number): Promis
     return `• ${intent} — ${date}`;
   });
 
-  await ctx.reply(lines.join("\n"));
+  let header = ctx.t("reminders-list");
+  if (city) {
+    const emoji = await getWeatherEmoji(city, new Date().toISOString()).catch(() => "");
+    header = `${ctx.t("weather-header", { city, emoji })}`
+  }
+
+  await ctx.reply(`${header}\n\n${lines.join("\n")}`);
 }
 
 export async function handleNewMessage(ctx: MyContext): Promise<void> {

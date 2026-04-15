@@ -36,6 +36,9 @@ Examples:
 {"is_reminder":true,"intent":"Call mom","remind_at":"2026-04-05T09:00:00+03:00"}
 {"is_reminder":false}`
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-haiku-4-5-20251001";
+
 let _geminiClient: GoogleGenerativeAI | null = null;
 let _anthropicClient: Anthropic | null = null;
 
@@ -70,7 +73,7 @@ function parseAIResponse(raw: string): AIResult {
 async function parseReminderWithGemini(userContent: string, nowIso: string): Promise<AIResult> {
   return callWithRetry("Gemini/parseReminder", async () => {
     const model = getGeminiClient().getGenerativeModel({
-      model: "gemini-3.1-flash-lite-preview",
+      model: GEMINI_MODEL,
       systemInstruction: SYSTEM_PROMPT,
     });
 
@@ -123,7 +126,7 @@ async function callWithRetry<T>(
 async function parseReminderWithClaude(userContent: string, nowIso: string): Promise<AIResult> {
   return callWithRetry("Claude/parseReminder", async () => {
     const message = await getAnthropicClient().messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: CLAUDE_MODEL,
       max_tokens: 256,
       system: SYSTEM_PROMPT,
       messages: [
@@ -189,7 +192,7 @@ function parseCityResponse(raw: string): CityTimezone {
 async function findCityWithGemini(query: string): Promise<CityTimezone> {
   return callWithRetry("Gemini/findCity", async () => {
     const model = getGeminiClient().getGenerativeModel({
-      model: "gemini-3.1-flash-lite-preview",
+      model: GEMINI_MODEL,
       systemInstruction: CITY_SYTEM_PROPT,
     });
 
@@ -201,7 +204,7 @@ async function findCityWithGemini(query: string): Promise<CityTimezone> {
 async function findCityWithClaude(query: string): Promise<CityTimezone> {
   return callWithRetry("Claude/findCity", async () => {
     const message = await getAnthropicClient().messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: CLAUDE_MODEL,
       max_tokens: 256,
       system: CITY_SYTEM_PROPT,
       messages: [{ role: "user", content: `User query: ${query}` }],
@@ -212,6 +215,56 @@ async function findCityWithClaude(query: string): Promise<CityTimezone> {
 
     return parseCityResponse(block.text.trim());
   });
+}
+
+const WEATHER_SYSTEM_PROMPT = `You are a weather emoji assistant. You receive a city name and the current local date and time.
+Your task: return 1 or 2 emojis that represent the most likely current weather in that city, based on its climate zone, hemisphere, and current season.
+
+Rules:
+- Return ONLY emoji characters — no text, no punctuation, no spaces, no explanation.
+- Use 1 emoji for clear conditions, up to 2 for mixed (e.g. partly cloudy with wind).
+- Choose from: ☀️ 🌤️ ⛅ ☁️ 🌦️ 🌧️ ⛈️ 🌨️ ❄️ 🌫️ 💨
+
+Examples of valid output: ☀️   🌧️   ⛅   ❄️   🌤️💨`
+
+async function getWeatherEmojiWithGemini(city: string, nowIso: string): Promise<string> {
+  return callWithRetry("Gemini/getWeatherEmoji", async () => {
+    const model = getGeminiClient().getGenerativeModel({
+      model: GEMINI_MODEL,
+      systemInstruction: WEATHER_SYSTEM_PROMPT,
+    });
+
+    const result = await model.generateContent(
+      `City: ${city}\nCurrent datetime: ${nowIso}`
+    );
+
+    return result.response.text().trim();
+  });
+}
+
+async function getWeatherEmojiWithClaude(city: string, nowIso: string): Promise<string> {
+  return callWithRetry("Claude/getWeatherEmoji", async () => {
+    const message = await getAnthropicClient().messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 16,
+      system: WEATHER_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: `City: ${city}\nCurrent datetime: ${nowIso}` }],
+    });
+
+    const block = message.content.find((b) => b.type === "text");
+    if (!block || block.type !== "text") throw new Error("No text block in Claude response");
+
+    return block.text.trim();
+  });
+}
+
+export async function getWeatherEmoji(city: string, nowIso: string): Promise<string> {
+  try {
+    return await getWeatherEmojiWithGemini(city, nowIso);
+  } catch (err) {
+    console.warn("[ai] Gemini failed for getWeatherEmoji, falling back to Claude:", err);
+    return await getWeatherEmojiWithClaude(city, nowIso);
+  }
 }
 
 export async function findCity(query: string): Promise<CityTimezone> {

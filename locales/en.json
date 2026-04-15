@@ -13,5 +13,6 @@
   "language-set": "Great! From now on, I'll speak to you in English 🇬🇧",
   "no-reminders": "You have no upcoming reminders.",
   "reminders-list": "Your upcoming reminders:",
+  "weather-header": "Weather in { $city } { $emoji }",
   "ai-unavailable": "Sorry, I'm having trouble reaching the AI right now. Please try again in a moment."
 }

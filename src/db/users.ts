@@ -30,10 +30,19 @@ export async function getUserTimezone(userId: number): Promise<string | null> {
   return (user?.timezone as string | undefined) ?? null;
 }
 
-export async function setUserTimezone(userId: number, timezone: string): Promise<void> {
+export async function getUserCity(userId: number): Promise<string | null> {
+  const db = await getDb();
+  const user = await db.collection("users").findOne(
+    { _id: userId as unknown as never },
+    { projection: { city: 1 } }
+  );
+  return (user?.city as string | undefined) ?? null;
+}
+
+export async function setUserTimezone(userId: number, timezone: string, city: string): Promise<void> {
   const db = await getDb();
   await db.collection("users").updateOne(
     { _id: userId as unknown as never },
-    { $set: { timezone } }
+    { $set: { timezone, city } }
   );
 }

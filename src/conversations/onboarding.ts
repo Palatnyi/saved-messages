@@ -123,7 +123,7 @@ export async function onboardingConversation(
     // ── User confirmed ────────────────────────────────────────────────────────
     await conversation.external(async (outerCtx) => {
       await upsertUser(userId, username);
-      await setUserTimezone(userId, timezone);
+      await setUserTimezone(userId, timezone, city);
 
       const pending = outerCtx.session.pendingTask;
       if (pending) {
