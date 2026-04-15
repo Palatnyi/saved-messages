@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
-import { parseReminder, getWeatherEmoji } from "../services/ai";
+import { parseReminder, getWeatherEmoji, transcribeAudio } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
 import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders } from "../db/reminders";
 import { getUserTimezone, getUserLanguageCode, getUserCity } from "../db/users";
@@ -128,6 +128,36 @@ export async function handleNewMessage(ctx: MyContext): Promise<void> {
   if (msg.reply_to_message) return;
 
   await processReminder(ctx, text, msg.from!.id, msg.from!.username, msg.message_id);
+}
+
+export async function handleVoiceMessage(ctx: MyContext): Promise<void> {
+  const msg = ctx.message!;
+  const from = msg.from!;
+  const voice = msg.voice ?? msg.audio;
+  if (!voice) return;
+
+  const file = await ctx.api.getFile(voice.file_id);
+  if (!file.file_path) {
+    await ctx.reply(ctx.t("ai-unavailable"));
+    return;
+  }
+
+  let text: string;
+  try {
+    const token = process.env.BOT_TOKEN!;
+    const res = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const mimeType = voice.mime_type ?? "audio/ogg";
+    text = await transcribeAudio(buffer.toString("base64"), mimeType);
+  } catch (err) {
+    console.error("[voice] transcription failed:", err);
+    await ctx.reply(ctx.t("ai-unavailable"));
+    return;
+  }
+
+  if (!text) return;
+
+  await processReminder(ctx, text, from.id, from.username, msg.message_id);
 }
 
 export async function handleReply(ctx: MyContext): Promise<void> {

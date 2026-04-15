@@ -4,7 +4,7 @@ import { onboardingConversation } from "./conversations/onboarding";
 import { type MyContext, type SessionData } from "./context";
 import { pingCommand } from "./commands/ping";
 import { languageCommand, languageCallbackHandler } from "./commands/language";
-import { handleNewMessage, handleReply } from "./handlers/message";
+import { handleNewMessage, handleReply, handleVoiceMessage } from "./handlers/message";
 import { i18n, loadLocales } from "./i18n";
 import { localeMiddleware } from "./middleware/locale";
 
@@ -47,6 +47,10 @@ export function setupBot(): void {
   bot.on("message:text", async (ctx, next) => {
     await handleReply(ctx);
     await next();
+  });
+
+  bot.on(["message:voice", "message:audio"], async (ctx) => {
+    await handleVoiceMessage(ctx);
   });
 
   // ── Error handler ─────────────────────────────────────────────────────────────

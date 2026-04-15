@@ -267,6 +267,26 @@ export async function getWeatherEmoji(city: string, nowIso: string): Promise<str
   }
 }
 
+const TRANSCRIPTION_SYSTEM_PROMPT = `You are a transcription service. Convert the spoken audio into written text.
+Return ONLY the spoken words exactly as heard — no summaries, no interpretation, no added punctuation beyond what is natural.
+If the audio is silent or inaudible, return an empty string.`
+
+export async function transcribeAudio(fileBase64: string, mimeType: string): Promise<string> {
+  return callWithRetry("Gemini/transcribeAudio", async () => {
+    const model = getGeminiClient().getGenerativeModel({
+      model: GEMINI_MODEL,
+      systemInstruction: TRANSCRIPTION_SYSTEM_PROMPT,
+    });
+
+    const result = await model.generateContent([
+      { inlineData: { data: fileBase64, mimeType } },
+      "Transcribe the audio.",
+    ]);
+
+    return result.response.text().trim();
+  });
+}
+
 export async function findCity(query: string): Promise<CityTimezone> {
   try {
     return await findCityWithGemini(query);
