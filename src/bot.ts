@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { Bot, session } from "grammy";
 import { conversations, createConversation } from "@grammyjs/conversations";
 import { onboardingConversation } from "./conversations/onboarding";
