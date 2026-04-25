@@ -26,24 +26,28 @@ async function processReminder(
   replyToText?: string,
   originalMsgId?: number
 ): Promise<void> {
+  // Fetch timezone first so the AI receives the user's local time.
+  // This ensures relative terms like "tomorrow" resolve against the correct date.
+  const timezone = await getUserTimezone(userId);
+  const nowIso = timezone
+    ? DateTime.now().setZone(timezone).toISO()!
+    : new Date().toISOString();
+
   let result;
   try {
-    result = await parseReminder(text, new Date().toISOString(), replyToText);
+    result = await parseReminder(text, nowIso, replyToText);
   } catch (err) {
     console.error("[ai] parseReminder failed:", err);
     await ctx.reply(ctx.t("ai-unavailable"));
     return;
   }
 
-  if (!result.is_reminder || !result.remind_at ) return;
-
-  // ── Timezone check ────────────────────────────────────────────────────────
-  const timezone = await getUserTimezone(userId);
+  if (!result.is_reminder || !result.remind_at) return;
 
   if (!timezone) {
     setTimeout(async () => {
       await ctx.react("👍");
-    }, 1500)
+    }, 1500);
     // Park the task in session — the onboarding conversation will save it
     // once the correct timezone is confirmed.
     ctx.session.pendingTask = {
@@ -58,6 +62,8 @@ async function processReminder(
   }
 
   // ── Normal save (timezone already known) ──────────────────────────────────
+  // AI was given local time with offset → remind_at already carries the correct
+  // offset, so a plain Date parse gives the right UTC instant.
   try {
     await upsertUser(userId, username);
 

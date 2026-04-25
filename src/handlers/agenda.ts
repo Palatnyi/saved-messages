@@ -2,16 +2,18 @@ import { InlineKeyboard } from "grammy";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
 import { getTodayReminders } from "../db/reminders";
-import { getUserTimezone, getUserLanguageCode } from "../db/users";
+import { getUserTimezone, getUserLanguageCode, getUserCity } from "../db/users";
 import { decrypt } from "../utils/crypto";
+import { getWeatherForCity } from "../services/weather";
 
 async function buildAgendaText(
   ctx: MyContext,
   userId: number
 ): Promise<string> {
-  const [timezone, languageCode] = await Promise.all([
+  const [timezone, languageCode, city] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguageCode(userId),
+    getUserCity(userId),
   ]);
 
   const zone = timezone ?? "UTC";
@@ -20,7 +22,10 @@ async function buildAgendaText(
   const startUtc = localNow.startOf("day").toUTC().toJSDate();
   const endUtc = localNow.endOf("day").toUTC().toJSDate();
 
-  const reminders = await getTodayReminders(userId, startUtc, endUtc);
+  const [reminders, weather] = await Promise.all([
+    getTodayReminders(userId, startUtc, endUtc),
+    city ? getWeatherForCity(city) : Promise.resolve(null),
+  ]);
 
   if (reminders.length === 0) return ctx.t("agenda-empty");
 
@@ -33,7 +38,18 @@ async function buildAgendaText(
     return `• ${intent} — ${time}`;
   });
 
-  return `${ctx.t("agenda-header")}\n\n${lines.join("\n")}`;
+  const agendaBody = `${ctx.t("agenda-header")}\n\n${lines.join("\n")}`;
+
+  if (weather && city) {
+    const weatherLine = ctx.t("agenda-weather", {
+      emoji: weather.emoji,
+      city,
+      temp: weather.tempC > 0 ? `+${weather.tempC}` : `${weather.tempC}`,
+    });
+    return `${weatherLine}\n\n${agendaBody}`;
+  }
+
+  return agendaBody;
 }
 
 /** Called from the inline keyboard "Yes, show me" button — edits the nudge message. */

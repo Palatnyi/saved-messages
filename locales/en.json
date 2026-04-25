@@ -1,7 +1,7 @@
 {
   "welcome": "Hey! I'm your personal reminder assistant — think of me as a quiet, reliable presence that never forgets a thing. Just tell me what's on your mind and I'll make sure you don't miss it. 🤝",
   "got-it-ask-city": "Got it! I've noted your task — but to remind you at exactly the right moment, I need to know your city. Could you tell me where you are?",
-  "ask-city": "To work like a Swiss watch and remind you at exactly the right moment, I need to know where you are. Which city do you live in?",
+  "ask-city": "Which city do you live in?",
   "set-city-button": "Set my city 🌍",
   "city-not-found": "Oops, I can't seem to find that place on the map. Could you try typing the name in English, or perhaps name a large city nearby?",
   "confirm-timezone": "It's { $time } in { $city } right now — does that look right to you?",
@@ -20,5 +20,6 @@
   "agenda-show-btn": "Yes, show me ✓",
   "agenda-later-btn": "Maybe later",
   "agenda-header": "Today's reminders:",
-  "agenda-empty": "Looks like all your reminders for today are already done 🎉"
+  "agenda-empty": "Looks like all your reminders for today are already done 🎉",
+  "agenda-weather": "{ $emoji } { $city } · { $temp }°C"
 }

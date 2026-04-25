@@ -8,8 +8,12 @@ import { DateTime } from "luxon";
  * Example: stored = "2025-06-02T09:00:00Z", timezone = "Europe/Kyiv" (UTC+3)
  *   → user meant 09:00 Kyiv = 06:00 UTC → returns Date for 06:00 UTC.
  */
-export function correctRemindAt(isoUtc: string, timezone: string): Date {
-  const stored = DateTime.fromISO(isoUtc, { zone: "UTC" });
+export function correctRemindAt(isoFromAI: string, timezone: string): Date {
+  // Strip any offset/Z so we get the bare wall-clock time the AI wrote.
+  // DateTime.fromISO with { zone: "UTC" } would convert the instant to UTC,
+  // making "+03:00" times lose 3 hours before we reinterpret them.
+  const noOffset = isoFromAI.replace(/Z$|[+-]\d{2}:?\d{2}$/, "");
+  const stored = DateTime.fromISO(noOffset);
   return DateTime.fromObject(
     {
       year: stored.year,
