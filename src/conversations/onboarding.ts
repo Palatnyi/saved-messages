@@ -5,6 +5,7 @@ import { type MyContext } from "../context";
 import { setUserTimezone } from "../db/users";
 import { upsertUser, saveReminder } from "../db/reminders";
 import { encrypt } from "../utils/crypto";
+import { correctRemindAt } from "../utils/time";
 import { findCity } from "../services/ai";
 import { i18n, resolveLocale } from "../i18n";
 import { CHANGE_TZ_TRIGGER, CHANGE_LANG_TRIGGER, REMINDERS_TRIGGER } from "../triggers";
@@ -35,29 +36,6 @@ function currentTimeIn(timezone: string): string {
   return DateTime.now().setZone(timezone).toFormat("HH:mm");
 }
 
-/**
- * The AI produced remindAt using UTC as "now" (timezone was unknown at the time).
- * Re-interpret the stored wall-clock components as a local time in the confirmed
- * timezone and return the correct UTC Date.
- *
- * Example: stored = "2025-06-02T09:00:00Z", timezone = "Europe/Kyiv" (UTC+3)
- *   → user meant 09:00 Kyiv = 06:00 UTC → returns Date for 06:00 UTC.
- */
-function correctRemindAt(isoUtc: string, timezone: string): Date {
-  const stored = DateTime.fromISO(isoUtc, { zone: "UTC" });
-  return DateTime.fromObject(
-    {
-      year: stored.year,
-      month: stored.month,
-      day: stored.day,
-      hour: stored.hour,
-      minute: stored.minute,
-      second: stored.second,
-    },
-    { zone: timezone }
-  ).toJSDate();
-}
-
 // ── Conversation ─────────────────────────────────────────────────────────────
 
 export async function onboardingConversation(
@@ -72,14 +50,23 @@ export async function onboardingConversation(
   const t = (key: string, vars?: Record<string, string>): string =>
     i18n.t(locale, key, vars);
 
-  await ctx.reply(t("ask-city"));
+  const cancelKeyboard = new InlineKeyboard().text(t("cancel"), "cancel_tz");
+
+  await ctx.reply(t("ask-city"), { reply_markup: cancelKeyboard });
 
   while (true) {
-    const cityCtx = await conversation.waitFor("message:text");
-    const query = cityCtx.message.text.trim();
+    const cityCtx = await conversation.wait();
+
+    if (cityCtx.callbackQuery?.data === "cancel_tz") {
+      await cityCtx.answerCallbackQuery();
+      return;
+    }
+
+    const query = cityCtx.message?.text?.trim();
+    if (!query) continue;
 
     if (await forwardTrigger(cityCtx, query, userId)) return;
-    if (query === CHANGE_TZ_TRIGGER) { await cityCtx.reply(t("ask-city")); continue; }
+    if (query === CHANGE_TZ_TRIGGER) { await cityCtx.reply(t("ask-city"), { reply_markup: cancelKeyboard }); continue; }
 
     const cityResponse = await conversation.external(async () => await findCity(query));
 
@@ -112,10 +99,11 @@ export async function onboardingConversation(
       }
 
       const data = confirmCtx.callbackQuery?.data;
-      if (data !== "tz_yes" && data !== "tz_no") continue;
+      if (!data || (data !== "tz_yes" && data !== "tz_no" && data !== "cancel_tz")) continue;
 
       await confirmCtx.answerCallbackQuery();
-      if (data === "tz_no") { await confirmCtx.reply(t("ask-city-again")); break; }
+      if (data === "cancel_tz") return;
+      if (data === "tz_no") { await confirmCtx.reply(t("ask-city-again"), { reply_markup: cancelKeyboard }); break; }
       confirmed = true;
     }
     if (!confirmed) continue;

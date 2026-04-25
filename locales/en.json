@@ -7,6 +7,7 @@
   "confirm-timezone": "It's { $time } in { $city } right now — does that look right to you?",
   "confirm-yes": "Yes, that's right ✓",
   "confirm-no": "No, try another city",
+  "cancel": "Cancel ✕",
   "ask-city-again": "No worries! Which city should I look up instead?",
   "synced": "We're in sync now — I'll work quietly in the background and make sure you're always on time. Feel free to keep going! 🕐",
   "language-choose": "Choose your language:",

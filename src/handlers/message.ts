@@ -1,10 +1,13 @@
 import { InlineKeyboard } from "grammy";
+import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
-import { parseReminder, getWeatherEmoji, transcribeAudio } from "../services/ai";
+import { parseReminder, transcribeAudio } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
-import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders } from "../db/reminders";
-import { getUserTimezone, getUserLanguageCode, getUserCity } from "../db/users";
+import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById } from "../db/reminders";
+import { getUserTimezone, getUserLanguageCode } from "../db/users";
+import { correctRemindAt } from "../utils/time";
+
 import { languageCommand } from "../commands/language";
 import { handleAgendaMessage } from "./agenda";
 import { CHANGE_TZ_TRIGGER, CHANGE_LANG_TRIGGER, REMINDERS_TRIGGER, CHECK_AGENDA_TRIGGER } from "../triggers";
@@ -59,7 +62,7 @@ async function processReminder(
     await upsertUser(userId, username);
 
     const encryptedPayload = encrypt(result.intent);
-    const remindAt = new Date(result.remind_at);
+    const remindAt = correctRemindAt(result.remind_at, timezone);
 
     if (originalMsgId !== undefined) {
       await upsertReminderByMsgId(userId, encryptedPayload, remindAt, originalMsgId, msgId);
@@ -75,12 +78,43 @@ async function processReminder(
   }
 }
 
+function buildRemindersMessage(
+  reminders: Awaited<ReturnType<typeof getPendingReminders>>,
+  zone: string,
+  locale: string
+): { text: string; keyboard: InlineKeyboard } {
+  const groups = new Map<string, typeof reminders>();
+  for (const r of reminders) {
+    const dateKey = DateTime.fromJSDate(r.remindAt).setZone(zone).toFormat("yyyy-MM-dd");
+    if (!groups.has(dateKey)) groups.set(dateKey, []);
+    groups.get(dateKey)!.push(r);
+  }
+
+  const keyboard = new InlineKeyboard();
+  const lines: string[] = [];
+
+  for (const [dateKey, dayReminders] of [...groups.entries()].sort()) {
+    const dateLabel = DateTime.fromISO(dateKey, { zone }).setLocale(locale).toFormat("cccc, d MMM yyyy");
+    lines.push(`*${dateLabel}*`);
+    for (const r of dayReminders) {
+      const intent = decrypt(r.encryptedPayload);
+      const time = DateTime.fromJSDate(r.remindAt).setZone(zone).toFormat("HH:mm");
+      lines.push(`• ${intent} — ${time}`);
+      keyboard.text(`🗑 ${intent}`, `del_rem:${r._id.toHexString()}`).row();
+    }
+    lines.push("");
+  }
+
+  return { text: lines.join("\n").trimEnd(), keyboard };
+}
+
+const FRIENDLY_EMOJIS = ["🌟", "🎯", "🌈", "🦋", "🌸", "🚀", "🎉", "🌻", "🍀", "⚡", "🎵", "🦄", "🌊", "🍭", "🐬"];
+
 export async function handleListMessages(ctx: MyContext, userId: number): Promise<void> {
-  const [reminders, timezone, languageCode, city] = await Promise.all([
+  const [reminders, timezone, languageCode] = await Promise.all([
     getPendingReminders(userId),
     getUserTimezone(userId),
     getLanguageCode(ctx, userId),
-    getUserCity(userId),
   ]);
 
   if (reminders.length === 0) {
@@ -90,19 +124,40 @@ export async function handleListMessages(ctx: MyContext, userId: number): Promis
 
   const zone = timezone ?? "UTC";
   const locale = languageCode ?? "en";
-  const lines = reminders.map((r) => {
-    const intent = decrypt(r.encryptedPayload);
-    const date = DateTime.fromJSDate(r.remindAt).setZone(zone).setLocale(locale).toFormat("ccc, d MMM yyyy, HH:mm");
-    return `• ${intent} — ${date}`;
-  });
+  const { text, keyboard } = buildRemindersMessage(reminders, zone, locale);
 
-  let header = ctx.t("reminders-list");
-  if (city) {
-    const emoji = await getWeatherEmoji(city, new Date().toISOString()).catch(() => "");
-    header = `${ctx.t("weather-header", { city, emoji })}`
+  const emoji = FRIENDLY_EMOJIS[Math.floor(Math.random() * FRIENDLY_EMOJIS.length)];
+  const today = DateTime.now().setZone(zone).setLocale(locale).toFormat("cccc, d MMM yyyy");
+  const header = `${emoji} *${today}*\n\n`;
+
+  await ctx.reply(header + text, { reply_markup: keyboard, parse_mode: "Markdown" });
+}
+
+export async function handleDeleteReminder(ctx: MyContext): Promise<void> {
+  await ctx.answerCallbackQuery();
+
+  const idStr = ctx.callbackQuery!.data!.slice("del_rem:".length);
+  const reminderId = new ObjectId(idStr);
+  const userId = ctx.from!.id;
+
+  await deleteReminderById(reminderId);
+
+  const [reminders, timezone, languageCode] = await Promise.all([
+    getPendingReminders(userId),
+    getUserTimezone(userId),
+    getLanguageCode(ctx, userId),
+  ]);
+
+  if (reminders.length === 0) {
+    await ctx.editMessageText(ctx.t("no-reminders"));
+    return;
   }
 
-  await ctx.reply(`${header}\n\n${lines.join("\n")}`);
+  const zone = timezone ?? "UTC";
+  const locale = languageCode ?? "en";
+  const { text, keyboard } = buildRemindersMessage(reminders, zone, locale);
+
+  await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: "Markdown" });
 }
 
 export async function handleNewMessage(ctx: MyContext): Promise<void> {

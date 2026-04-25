@@ -49,13 +49,13 @@ export async function saveReminder(
 
 export async function getPendingReminders(
   userId: number
-): Promise<Pick<ReminderDoc, "encryptedPayload" | "remindAt">[]> {
+): Promise<Required<Pick<ReminderDoc, "_id" | "encryptedPayload" | "remindAt">>[]> {
   const db = await getDb();
   return db
     .collection<ReminderDoc>("reminders")
     .find({ userId, status: "pending" }, { projection: { encryptedPayload: 1, remindAt: 1 } })
     .sort({ remindAt: 1 })
-    .toArray();
+    .toArray() as Promise<Required<Pick<ReminderDoc, "_id" | "encryptedPayload" | "remindAt">>[]>;
 }
 
 /**

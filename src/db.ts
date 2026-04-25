@@ -8,9 +8,10 @@ export async function getDb(): Promise<Db> {
   if (!_db) {
     const uri = process.env.MONGODB_URI;
     if (!uri) throw new Error("MONGODB_URI is not set in environment variables");
+    const dbName = process.env.NODE_ENV === "production" ? "savedMessageePROD" : "savedMessagesTEST";
     _client = new MongoClient(uri);
     await _client.connect();
-    _db = _client.db();
+    _db = _client.db(dbName);
   }
   return _db;
 }
