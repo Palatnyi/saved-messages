@@ -2,9 +2,9 @@ import { InlineKeyboard } from "grammy";
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
-import { parseReminder, transcribeAudio, type ReminderItem } from "../services/ai";
+import { parseAction, transcribeAudio, type ReminderItem, type DeleteCriteria } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
-import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById } from "../db/reminders";
+import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById, deleteRemindersByIds } from "../db/reminders";
 import { getUserTimezone, getUserLanguageCode } from "../db/users";
 import { correctRemindAt } from "../utils/time";
 
@@ -17,7 +17,74 @@ async function getLanguageCode(ctx: MyContext, userId: number): Promise<string> 
   return (await getUserLanguageCode(userId)) ?? "en";
 }
 
-async function processReminder(
+async function handleDeleteAction(
+  ctx: MyContext,
+  userId: number,
+  criteria: DeleteCriteria,
+  timezone: string | null
+): Promise<void> {
+  const all = await getPendingReminders(userId);
+
+  if (all.length === 0) {
+    await ctx.reply(ctx.t("no-reminders"));
+    return;
+  }
+
+  let toDelete: typeof all;
+
+  switch (criteria.kind) {
+    case "all":
+      toDelete = all;
+      break;
+
+    case "last": {
+      // Sort by _id descending: ObjectId encodes insertion timestamp + counter,
+      // so this reliably reflects the order records were added to the DB.
+      const sorted = [...all].sort((a, b) => (b._id.toString() > a._id.toString() ? 1 : -1));
+      toDelete = sorted.slice(0, criteria.count);
+      break;
+    }
+
+    case "date": {
+      if (!timezone) {
+        const keyboard = new InlineKeyboard().text(ctx.t("set-city-button"), "set_city");
+        await ctx.reply(ctx.t("got-it-ask-city"), { reply_markup: keyboard });
+        return;
+      }
+      const target = DateTime.fromISO(criteria.date, { zone: timezone });
+      toDelete = all.filter((r) =>
+        DateTime.fromJSDate(r.remindAt).setZone(timezone).hasSame(target, "day")
+      );
+      break;
+    }
+
+    case "keywords": {
+      const terms = criteria.terms.map((t) => t.toLowerCase());
+      toDelete = all.filter((r) => {
+        const intent = decrypt(r.encryptedPayload).toLowerCase();
+        return terms.some((term) => intent.includes(term));
+      });
+      break;
+    }
+  }
+
+  if (toDelete.length === 0) {
+    await ctx.reply(ctx.t("delete-not-found"));
+    return;
+  }
+
+  await deleteRemindersByIds(toDelete.map((r) => r._id));
+
+  const lines = [ctx.t("deleted-header")];
+  for (const r of toDelete) {
+    const intent = decrypt(r.encryptedPayload);
+    lines.push(`• ${intent}`);
+  }
+  console.log(`[reminder] deleted ${toDelete.length} for user ${userId} — criteria: ${JSON.stringify(criteria)}`);
+  await ctx.reply(lines.join("\n"));
+}
+
+async function processMessage(
   ctx: MyContext,
   text: string,
   userId: number,
@@ -26,30 +93,34 @@ async function processReminder(
   replyToText?: string,
   originalMsgId?: number
 ): Promise<void> {
-  // Fetch timezone first so the AI receives the user's local time.
-  // This ensures relative terms like "tomorrow" resolve against the correct date.
   const timezone = await getUserTimezone(userId);
   const nowIso = timezone
     ? DateTime.now().setZone(timezone).toISO()!
     : new Date().toISOString();
 
-  let items: ReminderItem[];
+  let parsed;
   try {
-    items = await parseReminder(text, nowIso, replyToText);
+    parsed = await parseAction(text, nowIso, replyToText);
   } catch (err) {
-    console.error("[ai] parseReminder failed:", err);
+    console.error("[ai] parseAction failed:", err);
     await ctx.reply(ctx.t("ai-unavailable"));
     return;
   }
 
-  const withTime = items.filter((r) => r.remind_at !== null);
+  if (parsed.action === "none") return;
+
+  if (parsed.action === "delete") {
+    await handleDeleteAction(ctx, userId, parsed.criteria, timezone);
+    return;
+  }
+
+  // ── action === "remind" ───────────────────────────────────────────────────
+  const withTime = parsed.items.filter((r: ReminderItem) => r.remind_at !== null);
   if (withTime.length === 0) return;
 
   if (!timezone) {
-    setTimeout(async () => {
-      await ctx.react("👍");
-    }, 1500);
-    ctx.session.pendingTasks = withTime.map((r) => ({
+    setTimeout(async () => { await ctx.react("👍"); }, 1500);
+    ctx.session.pendingTasks = withTime.map((r: ReminderItem) => ({
       intent: r.intent,
       remindAt: r.remind_at!,
       msgId,
@@ -59,7 +130,6 @@ async function processReminder(
     return;
   }
 
-  // ── Normal save (timezone already known) ──────────────────────────────────
   try {
     await upsertUser(userId, username);
 
@@ -192,7 +262,7 @@ export async function handleNewMessage(ctx: MyContext): Promise<void> {
   if (text.startsWith("/")) return;
   if (msg.reply_to_message) return;
 
-  await processReminder(ctx, text, msg.from!.id, msg.from!.username, msg.message_id);
+  await processMessage(ctx, text, msg.from!.id, msg.from!.username, msg.message_id);
 }
 
 export async function handleVoiceMessage(ctx: MyContext): Promise<void> {
@@ -222,7 +292,7 @@ export async function handleVoiceMessage(ctx: MyContext): Promise<void> {
 
   if (!text) return;
 
-  await processReminder(ctx, text, from.id, from.username, msg.message_id);
+  await processMessage(ctx, text, from.id, from.username, msg.message_id);
 }
 
 export async function handleReply(ctx: MyContext): Promise<void> {
@@ -234,7 +304,7 @@ export async function handleReply(ctx: MyContext): Promise<void> {
   if (replyTo?.from?.id !== from.id) return;
   if (typeof replyTo?.text !== "string") return;
 
-  await processReminder(
+  await processMessage(
     ctx,
     text,
     from.id,

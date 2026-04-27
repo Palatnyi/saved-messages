@@ -6,37 +6,55 @@ export interface ReminderItem {
   remind_at: string | null; // ISO 8601 or null
 }
 
-const SYSTEM_PROMPT = `You are a reminder parser. The user may send a message containing one or more reminders.
+export type DeleteCriteria =
+  | { kind: "last"; count: number }
+  | { kind: "keywords"; terms: string[] }
+  | { kind: "date"; date: string } // YYYY-MM-DD in user's local timezone
+  | { kind: "all" }
 
-Extract ALL actionable tasks, appointments, to-dos, or things to remember from the message.
+export type ParsedAction =
+  | { action: "remind"; items: ReminderItem[] }
+  | { action: "delete"; criteria: DeleteCriteria }
+  | { action: "none" }
 
-Classification:
-- Include: any task, appointment, to-do, or thing to do/remember (e.g., "buy milk", "call mom", "zoom call at noon").
-- Exclude: greetings, questions, random thoughts, casual conversation.
+const SYSTEM_PROMPT = `You are a smart assistant that parses user messages into structured actions.
 
-Time resolution rules:
-1. Explicit or relative time given → resolve it against the provided current datetime and return a full ISO 8601 string with timezone offset.
-2. No time mentioned → set "remind_at" to null. Do NOT guess a default time.
+The user may want to:
+A) Create one or more reminders
+B) Delete reminders
+C) Neither (casual chat, questions, greetings)
 
-Output: A JSON array. Each element represents one reminder:
-- "intent": a concise action phrase — maximum 6 words, same language as the user. Strip all datetime words, filler, explanations, and context. Distil the core action only.
-- "remind_at": ISO 8601 string with offset, or null.
+--- ACTION A: remind ---
+Extract ALL tasks/appointments the user wants to be reminded of.
+Each reminder:
+- "intent": max 6 words, same language as user, no datetime words. Distil core action only.
+- "remind_at": ISO 8601 with timezone offset, or null if no time given.
 
-If no reminders found, return [].
-Respond ONLY with a valid JSON array. No markdown, no code fences, no explanation.
+--- ACTION B: delete ---
+Detect when user wants to delete/remove/cancel reminders. Extract one of these criteria:
+- last N: {"kind":"last","count":N} — delete the most recently added reminder(s). Default count=1.
+- by content: {"kind":"keywords","terms":[...]} — key nouns/verbs from the description (same language, lowercase).
+- by date: {"kind":"date","date":"YYYY-MM-DD"} — resolve the mentioned day against current datetime.
+- all: {"kind":"all"} — delete everything.
 
-Current datetime: {{current_datetime}} (Use this to resolve "tomorrow", "tonight", "next Friday", etc.)
+--- OUTPUT ---
+Respond ONLY with a valid JSON object. No markdown, no code fences.
 
-Examples (note how verbose speech is compressed):
-Input: "нагадай мені завтра о 5 вечора зателефонувати братові бо він просив обговорити справи по роботі"
-Output: [{"intent":"Зателефонувати братові","remind_at":"2026-04-29T17:00:00+03:00"}]
+{"action":"remind","items":[{"intent":"...","remind_at":"..."|null},...]}
+{"action":"delete","criteria":{...}}
+{"action":"none"}
 
-Input: "remind me at noon to call the bank about my credit card issue that I've been putting off"
-Output: [{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00"}]
+Current datetime: {{current_datetime}}
 
-[{"intent":"Call brother","remind_at":"2026-04-28T17:00:00+03:00"},{"intent":"Check email","remind_at":"2026-04-28T21:00:00+03:00"}]
-[{"intent":"Buy milk","remind_at":null}]
-[]`
+Examples:
+"нагадай завтра о 17 зателефонувати брату" → {"action":"remind","items":[{"intent":"Зателефонувати брату","remind_at":"2026-04-29T17:00:00+03:00"}]}
+"remind me at noon to call the bank about my credit card issue" → {"action":"remind","items":[{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00"}]}
+"видали останнє нагадування" → {"action":"delete","criteria":{"kind":"last","count":1}}
+"delete the last 3 reminders" → {"action":"delete","criteria":{"kind":"last","count":3}}
+"видали нагадування про дзвінок братові" → {"action":"delete","criteria":{"kind":"keywords","terms":["дзвінок","брат"]}}
+"видали всі нагадування за 23 число" → {"action":"delete","criteria":{"kind":"date","date":"2026-04-23"}}
+"видали всі нагадування" → {"action":"delete","criteria":{"kind":"all"}}
+"hello" → {"action":"none"}`
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-haiku-4-5-20251001";
@@ -62,19 +80,22 @@ function getAnthropicClient(): Anthropic {
   return _anthropicClient;
 }
 
-function parseAIResponse(raw: string): ReminderItem[] {
+function parseAIResponse(raw: string): ParsedAction {
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as ReminderItem[];
-    return [];
+    if (parsed && typeof parsed === "object" && "action" in parsed) return parsed as ParsedAction;
+    return { action: "none" };
   } catch {
-    const match = raw.match(/\[[\s\S]*\]/);
-    if (match) return JSON.parse(match[0]) as ReminderItem[];
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (parsed && "action" in parsed) return parsed as ParsedAction;
+    }
     throw new Error(`Unparseable AI response: ${raw}`);
   }
 }
 
-async function parseReminderWithGemini(userContent: string, nowIso: string): Promise<ReminderItem[]> {
+async function parseActionWithGemini(userContent: string, nowIso: string): Promise<ParsedAction> {
   return callWithRetry("Gemini/parseReminder", async () => {
     const model = getGeminiClient().getGenerativeModel({
       model: GEMINI_MODEL,
@@ -127,8 +148,8 @@ async function callWithRetry<T>(
   throw new Error("Unreachable");
 }
 
-async function parseReminderWithClaude(userContent: string, nowIso: string): Promise<ReminderItem[]> {
-  return callWithRetry("Claude/parseReminder", async () => {
+async function parseActionWithClaude(userContent: string, nowIso: string): Promise<ParsedAction> {
+  return callWithRetry("Claude/parseAction", async () => {
     const message = await getAnthropicClient().messages.create({
       model: CLAUDE_MODEL,
       max_tokens: 512,
@@ -145,20 +166,20 @@ async function parseReminderWithClaude(userContent: string, nowIso: string): Pro
   });
 }
 
-export async function parseReminder(
+export async function parseAction(
   text: string,
   nowIso: string,
   replyToText?: string
-): Promise<ReminderItem[]> {
+): Promise<ParsedAction> {
   const userContent = replyToText
     ? `Original message: ${replyToText}\nFollow-up reply: ${text}`
     : `User message: ${text}`;
 
   try {
-    return await parseReminderWithGemini(userContent, nowIso);
+    return await parseActionWithGemini(userContent, nowIso);
   } catch (err) {
     console.warn("[ai] Gemini failed, falling back to Claude:", err);
-    return await parseReminderWithClaude(userContent, nowIso);
+    return await parseActionWithClaude(userContent, nowIso);
   }
 }
 

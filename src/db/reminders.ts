@@ -58,6 +58,13 @@ export async function getPendingReminders(
     .toArray() as Promise<Required<Pick<ReminderDoc, "_id" | "encryptedPayload" | "remindAt">>[]>;
 }
 
+export async function deleteRemindersByIds(ids: ObjectId[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const db = await getDb();
+  const result = await db.collection<ReminderDoc>("reminders").deleteMany({ _id: { $in: ids } });
+  return result.deletedCount;
+}
+
 /**
  * Returns all pending reminders whose remindAt is on or before now (UTC).
  * Includes _id so callers can delete after sending.
