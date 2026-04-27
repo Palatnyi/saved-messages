@@ -8,6 +8,12 @@ interface UserDoc {
   createdAt: Date;
 }
 
+export interface StoredRecurrence {
+  freq: "daily" | "weekly" | "monthly" | "yearly";
+  interval: number;
+  until?: Date; // undefined = no end
+}
+
 interface ReminderDoc {
   _id?: ObjectId;
   userId: number;
@@ -16,6 +22,7 @@ interface ReminderDoc {
   msgId?: number;
   status: "pending" | "sent" | "failed";
   createdAt: Date;
+  recurrence?: StoredRecurrence;
 }
 
 export async function upsertUser(id: number, username?: string): Promise<void> {
@@ -34,7 +41,8 @@ export async function saveReminder(
   userId: number,
   encryptedPayload: string,
   remindAt: Date,
-  msgId?: number
+  msgId?: number,
+  recurrence?: StoredRecurrence
 ): Promise<void> {
   const db = await getDb();
   await db.collection<ReminderDoc>("reminders").insertOne({
@@ -42,6 +50,7 @@ export async function saveReminder(
     encryptedPayload,
     remindAt,
     ...(msgId !== undefined ? { msgId } : {}),
+    ...(recurrence ? { recurrence } : {}),
     status: "pending",
     createdAt: new Date(),
   });
@@ -67,19 +76,26 @@ export async function deleteRemindersByIds(ids: ObjectId[]): Promise<number> {
 
 /**
  * Returns all pending reminders whose remindAt is on or before now (UTC).
- * Includes _id so callers can delete after sending.
+ * Includes recurrence so the scheduler can spawn the next occurrence.
  */
-export async function fetchDueReminders(): Promise<
-  Required<Pick<ReminderDoc, "_id" | "userId" | "encryptedPayload">>[]
-> {
+export type DueReminder = {
+  _id: ObjectId;
+  userId: number;
+  encryptedPayload: string;
+  remindAt: Date;
+  recurrence?: StoredRecurrence;
+};
+
+export async function fetchDueReminders(): Promise<DueReminder[]> {
   const db = await getDb();
-  return db
+  const docs = await db
     .collection<ReminderDoc>("reminders")
     .find(
       { status: "pending", remindAt: { $lte: new Date() } },
-      { projection: { userId: 1, encryptedPayload: 1 } }
+      { projection: { userId: 1, encryptedPayload: 1, remindAt: 1, recurrence: 1 } }
     )
-    .toArray() as Promise<Required<Pick<ReminderDoc, "_id" | "userId" | "encryptedPayload">>[]>;
+    .toArray();
+  return docs as unknown as DueReminder[];
 }
 
 /**

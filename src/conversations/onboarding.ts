@@ -118,7 +118,16 @@ export async function onboardingConversation(
         for (const task of pending) {
           const encryptedPayload = encrypt(task.intent);
           const remindAt = correctRemindAt(task.remindAt, timezone);
-          await saveReminder(userId, encryptedPayload, remindAt, task.msgId);
+          const recurrence = task.recurrence
+            ? {
+                freq: task.recurrence.freq as "daily" | "weekly" | "monthly" | "yearly",
+                interval: task.recurrence.interval,
+                ...(task.recurrence.until
+                  ? { until: new Date(task.recurrence.until) }
+                  : {}),
+              }
+            : undefined;
+          await saveReminder(userId, encryptedPayload, remindAt, task.msgId, recurrence);
         }
         delete outerCtx.session.pendingTasks;
       }

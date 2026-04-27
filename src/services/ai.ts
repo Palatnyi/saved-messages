@@ -1,9 +1,16 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Anthropic from "@anthropic-ai/sdk";
 
+export interface RecurrenceRule {
+  freq: "daily" | "weekly" | "monthly" | "yearly";
+  interval: number;   // every N units
+  until: string | null; // YYYY-MM-DD end date or null (no end)
+}
+
 export interface ReminderItem {
   intent: string;
   remind_at: string | null; // ISO 8601 or null
+  recurrence: RecurrenceRule | null;
 }
 
 export type DeleteCriteria =
@@ -15,6 +22,7 @@ export type DeleteCriteria =
 export type ParsedAction =
   | { action: "remind"; items: ReminderItem[] }
   | { action: "delete"; criteria: DeleteCriteria }
+  | { action: "list" }
   | { action: "none" }
 
 const SYSTEM_PROMPT = `You are a smart assistant that parses user messages into structured actions.
@@ -22,13 +30,17 @@ const SYSTEM_PROMPT = `You are a smart assistant that parses user messages into 
 The user may want to:
 A) Create one or more reminders
 B) Delete reminders
-C) Neither (casual chat, questions, greetings)
+C) List / show their reminders
+D) Neither (casual chat, questions, greetings)
 
 --- ACTION A: remind ---
 Extract ALL tasks/appointments the user wants to be reminded of.
 Each reminder:
 - "intent": max 6 words, same language as user, no datetime words. Distil core action only.
-- "remind_at": ISO 8601 with timezone offset, or null if no time given.
+- "remind_at": ISO 8601 with timezone offset for the FIRST occurrence, or null if no time given.
+- "recurrence": null for one-time reminders. For recurring patterns:
+    {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"until":"YYYY-MM-DD"|null}
+    freq = base unit, interval = every N units (default 1), until = end date or null if open-ended.
 
 --- ACTION B: delete ---
 Detect when user wants to delete/remove/cancel reminders. Extract one of these criteria:
@@ -37,23 +49,33 @@ Detect when user wants to delete/remove/cancel reminders. Extract one of these c
 - by date: {"kind":"date","date":"YYYY-MM-DD"} — resolve the mentioned day against current datetime.
 - all: {"kind":"all"} — delete everything.
 
+--- ACTION C: list ---
+Detect when user wants to see, show, or check their reminders (e.g. "покажи нагадування", "що в мене заплановано?", "show my reminders", "список задач").
+→ {"action":"list"}
+
 --- OUTPUT ---
 Respond ONLY with a valid JSON object. No markdown, no code fences.
 
-{"action":"remind","items":[{"intent":"...","remind_at":"..."|null},...]}
+{"action":"remind","items":[{"intent":"...","remind_at":"..."|null,"recurrence":null|{...}},...]}
 {"action":"delete","criteria":{...}}
+{"action":"list"}
 {"action":"none"}
 
 Current datetime: {{current_datetime}}
 
 Examples:
-"нагадай завтра о 17 зателефонувати брату" → {"action":"remind","items":[{"intent":"Зателефонувати брату","remind_at":"2026-04-29T17:00:00+03:00"}]}
-"remind me at noon to call the bank about my credit card issue" → {"action":"remind","items":[{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00"}]}
+"нагадай завтра о 17 зателефонувати брату" → {"action":"remind","items":[{"intent":"Зателефонувати брату","remind_at":"2026-04-29T17:00:00+03:00","recurrence":null}]}
+"remind me at noon to call the bank about my credit card issue" → {"action":"remind","items":[{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00","recurrence":null}]}
+"нагадуй кожного місяця сплачувати податки" → {"action":"remind","items":[{"intent":"Сплачувати податки","remind_at":null,"recurrence":{"freq":"monthly","interval":1,"until":null}}]}
+"нагадуй щодня о 9:00 робити зарядку до кінця травня" → {"action":"remind","items":[{"intent":"Зарядка","remind_at":"2026-04-28T09:00:00+03:00","recurrence":{"freq":"daily","interval":1,"until":"2026-05-31"}}]}
+"remind me every 2 weeks to submit a report" → {"action":"remind","items":[{"intent":"Submit report","remind_at":null,"recurrence":{"freq":"weekly","interval":2,"until":null}}]}
 "видали останнє нагадування" → {"action":"delete","criteria":{"kind":"last","count":1}}
 "delete the last 3 reminders" → {"action":"delete","criteria":{"kind":"last","count":3}}
 "видали нагадування про дзвінок братові" → {"action":"delete","criteria":{"kind":"keywords","terms":["дзвінок","брат"]}}
 "видали всі нагадування за 23 число" → {"action":"delete","criteria":{"kind":"date","date":"2026-04-23"}}
 "видали всі нагадування" → {"action":"delete","criteria":{"kind":"all"}}
+"покажи мої нагадування" → {"action":"list"}
+"що в мене заплановано?" → {"action":"list"}
 "hello" → {"action":"none"}`
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";

@@ -97,14 +97,14 @@ describe("handleNewMessage", () => {
   test("AI recognises reminder and timezone is set — saves to DB and reacts", async () => {
     mockParseAction.mockResolvedValue({
       action: "remind",
-      items: [{ intent: "Buy milk", remind_at: "2025-06-01T09:00:00+00:00" }],
+      items: [{ intent: "Buy milk", remind_at: "2025-06-01T09:00:00+00:00", recurrence: null }],
     });
 
     const ctx = makeCtx("Buy milk tomorrow morning", { userId: 42, messageId: 101 });
     await handleNewMessage(ctx);
 
     expect(mockSaveReminder).toHaveBeenCalledWith(
-      42, "encrypted-payload", new Date("2025-06-01T09:00:00+00:00"), 101
+      42, "encrypted-payload", new Date("2025-06-01T09:00:00+00:00"), 101, undefined
     );
     expect(ctx.react).toHaveBeenCalledWith("👍");
     expect(ctx.reply).not.toHaveBeenCalled();
@@ -114,9 +114,9 @@ describe("handleNewMessage", () => {
     mockParseAction.mockResolvedValue({
       action: "remind",
       items: [
-        { intent: "Call brother", remind_at: "2025-06-01T17:00:00+00:00" },
-        { intent: "Check email", remind_at: "2025-06-01T21:00:00+00:00" },
-        { intent: "Zoom call", remind_at: "2025-06-01T12:00:00+00:00" },
+        { intent: "Call brother", remind_at: "2025-06-01T17:00:00+00:00", recurrence: null },
+        { intent: "Check email", remind_at: "2025-06-01T21:00:00+00:00", recurrence: null },
+        { intent: "Zoom call", remind_at: "2025-06-01T12:00:00+00:00", recurrence: null },
       ],
     });
 
@@ -132,7 +132,7 @@ describe("handleNewMessage", () => {
     mockGetUserTimezone.mockResolvedValue(null);
     mockParseAction.mockResolvedValue({
       action: "remind",
-      items: [{ intent: "Call dentist", remind_at: "2025-06-02T10:00:00+00:00" }],
+      items: [{ intent: "Call dentist", remind_at: "2025-06-02T10:00:00+00:00", recurrence: null }],
     });
 
     const ctx = makeCtx("Call dentist tomorrow", { userId: 42, messageId: 55 });
@@ -227,7 +227,7 @@ describe("handleReply", () => {
   test("user replies to own message and AI recognises reminder — upserts DB entry and reacts", async () => {
     mockParseAction.mockResolvedValue({
       action: "remind",
-      items: [{ intent: "Call the dentist", remind_at: "2025-06-02T10:00:00+00:00" }],
+      items: [{ intent: "Call the dentist", remind_at: "2025-06-02T10:00:00+00:00", recurrence: null }],
     });
 
     const ctx = makeCtx("actually remind me at 10am", {

@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 import { type MyContext } from "../context";
 import { parseAction, transcribeAudio, type ReminderItem, type DeleteCriteria } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
-import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById, deleteRemindersByIds } from "../db/reminders";
+import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById, deleteRemindersByIds, type StoredRecurrence } from "../db/reminders";
 import { getUserTimezone, getUserLanguageCode } from "../db/users";
 import { correctRemindAt } from "../utils/time";
 
@@ -109,6 +109,11 @@ async function processMessage(
 
   if (parsed.action === "none") return;
 
+  if (parsed.action === "list") {
+    await handleListMessages(ctx, userId);
+    return;
+  }
+
   if (parsed.action === "delete") {
     await handleDeleteAction(ctx, userId, parsed.criteria, timezone);
     return;
@@ -124,6 +129,13 @@ async function processMessage(
       intent: r.intent,
       remindAt: r.remind_at!,
       msgId,
+      ...(r.recurrence ? {
+        recurrence: {
+          freq: r.recurrence.freq,
+          interval: r.recurrence.interval,
+          ...(r.recurrence.until ? { until: r.recurrence.until } : {}),
+        },
+      } : {}),
     }));
     const keyboard = new InlineKeyboard().text(ctx.t("set-city-button"), "set_city");
     await ctx.reply(ctx.t("got-it-ask-city"), { reply_markup: keyboard });
@@ -136,13 +148,14 @@ async function processMessage(
     for (const item of withTime) {
       const encryptedPayload = encrypt(item.intent);
       const remindAt = correctRemindAt(item.remind_at!, timezone);
+      const recurrence = toStoredRecurrence(item.recurrence, timezone);
 
       if (originalMsgId !== undefined) {
         await upsertReminderByMsgId(userId, encryptedPayload, remindAt, originalMsgId, msgId);
         console.log(`[reminder] upserted via reply for user ${userId} — intent: "${item.intent}" at ${item.remind_at}`);
       } else {
-        await saveReminder(userId, encryptedPayload, remindAt, msgId);
-        console.log(`[reminder] saved for user ${userId} — intent: "${item.intent}" at ${item.remind_at}`);
+        await saveReminder(userId, encryptedPayload, remindAt, msgId, recurrence);
+        console.log(`[reminder] saved for user ${userId} — intent: "${item.intent}" at ${item.remind_at}${recurrence ? ` (${recurrence.freq} ×${recurrence.interval})` : ""}`);
       }
     }
 
@@ -150,6 +163,18 @@ async function processMessage(
   } catch (err) {
     console.error("[reminder] failed to save:", err);
   }
+}
+
+function toStoredRecurrence(
+  r: ReminderItem["recurrence"],
+  timezone: string
+): StoredRecurrence | undefined {
+  if (!r) return undefined;
+  return {
+    freq: r.freq,
+    interval: r.interval,
+    ...(r.until ? { until: DateTime.fromISO(r.until, { zone: timezone }).endOf("day").toJSDate() } : {}),
+  };
 }
 
 function buildRemindersMessage(

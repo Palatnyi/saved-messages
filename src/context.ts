@@ -11,6 +11,7 @@ export interface SessionData {
     intent: string;
     remindAt: string; // ISO 8601 — adjusted once timezone is confirmed
     msgId: number;
+    recurrence?: { freq: string; interval: number; until?: string };
   }>;
 }
 

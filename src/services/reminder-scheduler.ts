@@ -1,17 +1,20 @@
+import { DateTime } from "luxon";
 import { bot } from "../bot";
-import { fetchDueReminders, deleteReminderById } from "../db/reminders";
+import { fetchDueReminders, deleteReminderById, saveReminder, type StoredRecurrence } from "../db/reminders";
 import { decrypt } from "../utils/crypto";
 
 const INTERVAL_MS = 60_000; // 1 minute
 
-/**
- * Fetches all reminders whose remindAt <= UTC now, sends each one to the
- * corresponding Telegram user, then deletes the reminder from the database.
- *
- * remindAt is always stored as UTC (timezone offset is applied at save-time),
- * so comparing against new Date() is correct regardless of the server's
- * local timezone.
- */
+function nextOccurrence(remindAt: Date, rule: StoredRecurrence): Date {
+  const dt = DateTime.fromJSDate(remindAt);
+  switch (rule.freq) {
+    case "daily":   return dt.plus({ days: rule.interval }).toJSDate();
+    case "weekly":  return dt.plus({ weeks: rule.interval }).toJSDate();
+    case "monthly": return dt.plus({ months: rule.interval }).toJSDate();
+    case "yearly":  return dt.plus({ years: rule.interval }).toJSDate();
+  }
+}
+
 async function sendDueReminders(): Promise<void> {
   let reminders;
   try {
@@ -29,6 +32,16 @@ async function sendDueReminders(): Promise<void> {
     try {
       const text = decrypt(reminder.encryptedPayload);
       await bot.api.sendMessage(reminder.userId, `⏰ ${text}`);
+
+      if (reminder.recurrence) {
+        const next = nextOccurrence(reminder.remindAt, reminder.recurrence);
+        const withinBounds = !reminder.recurrence.until || next <= reminder.recurrence.until;
+        if (withinBounds) {
+          await saveReminder(reminder.userId, reminder.encryptedPayload, next, undefined, reminder.recurrence);
+          console.log(`[scheduler] scheduled next recurrence for user ${reminder.userId} at ${next.toISOString()}`);
+        }
+      }
+
       await deleteReminderById(reminder._id);
       console.log(`[scheduler] sent and removed reminder ${reminder._id} for user ${reminder.userId}`);
     } catch (err) {
@@ -42,8 +55,6 @@ async function sendDueReminders(): Promise<void> {
 
 export function startReminderScheduler(): void {
   console.log("[scheduler] reminder scheduler started — checking every minute");
-
-  // Run once immediately so overdue reminders are handled on boot, then repeat.
   sendDueReminders();
   setInterval(sendDueReminders, INTERVAL_MS);
 }
