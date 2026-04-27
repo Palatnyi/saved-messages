@@ -2,7 +2,7 @@ import { InlineKeyboard } from "grammy";
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { type MyContext } from "../context";
-import { parseReminder, transcribeAudio } from "../services/ai";
+import { parseReminder, transcribeAudio, type ReminderItem } from "../services/ai";
 import { encrypt, decrypt } from "../utils/crypto";
 import { upsertUser, saveReminder, upsertReminderByMsgId, getPendingReminders, deleteReminderById } from "../db/reminders";
 import { getUserTimezone, getUserLanguageCode } from "../db/users";
@@ -33,49 +33,47 @@ async function processReminder(
     ? DateTime.now().setZone(timezone).toISO()!
     : new Date().toISOString();
 
-  let result;
+  let items: ReminderItem[];
   try {
-    result = await parseReminder(text, nowIso, replyToText);
+    items = await parseReminder(text, nowIso, replyToText);
   } catch (err) {
     console.error("[ai] parseReminder failed:", err);
     await ctx.reply(ctx.t("ai-unavailable"));
     return;
   }
 
-  if (!result.is_reminder || !result.remind_at) return;
+  const withTime = items.filter((r) => r.remind_at !== null);
+  if (withTime.length === 0) return;
 
   if (!timezone) {
     setTimeout(async () => {
       await ctx.react("👍");
     }, 1500);
-    // Park the task in session — the onboarding conversation will save it
-    // once the correct timezone is confirmed.
-    ctx.session.pendingTask = {
-      intent: result.intent,
-      remindAt: result.remind_at,
+    ctx.session.pendingTasks = withTime.map((r) => ({
+      intent: r.intent,
+      remindAt: r.remind_at!,
       msgId,
-    };
-
+    }));
     const keyboard = new InlineKeyboard().text(ctx.t("set-city-button"), "set_city");
     await ctx.reply(ctx.t("got-it-ask-city"), { reply_markup: keyboard });
     return;
   }
 
   // ── Normal save (timezone already known) ──────────────────────────────────
-  // AI was given local time with offset → remind_at already carries the correct
-  // offset, so a plain Date parse gives the right UTC instant.
   try {
     await upsertUser(userId, username);
 
-    const encryptedPayload = encrypt(result.intent);
-    const remindAt = correctRemindAt(result.remind_at, timezone);
+    for (const item of withTime) {
+      const encryptedPayload = encrypt(item.intent);
+      const remindAt = correctRemindAt(item.remind_at!, timezone);
 
-    if (originalMsgId !== undefined) {
-      await upsertReminderByMsgId(userId, encryptedPayload, remindAt, originalMsgId, msgId);
-      console.log(`[reminder] upserted via reply for user ${userId} — intent: "${result.intent}" at ${result.remind_at}`);
-    } else {
-      await saveReminder(userId, encryptedPayload, remindAt, msgId);
-      console.log(`[reminder] saved for user ${userId} — intent: "${result.intent}" at ${result.remind_at}`);
+      if (originalMsgId !== undefined) {
+        await upsertReminderByMsgId(userId, encryptedPayload, remindAt, originalMsgId, msgId);
+        console.log(`[reminder] upserted via reply for user ${userId} — intent: "${item.intent}" at ${item.remind_at}`);
+      } else {
+        await saveReminder(userId, encryptedPayload, remindAt, msgId);
+        console.log(`[reminder] saved for user ${userId} — intent: "${item.intent}" at ${item.remind_at}`);
+      }
     }
 
     await ctx.react("👍");

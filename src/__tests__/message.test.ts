@@ -8,11 +8,13 @@ jest.mock("../services/ai");
 jest.mock("../utils/crypto");
 jest.mock("../db/reminders");
 jest.mock("../db/users");
+jest.mock("../utils/time");
 
 import { parseReminder } from "../services/ai";
 import { encrypt } from "../utils/crypto";
 import { upsertUser, saveReminder, upsertReminderByMsgId } from "../db/reminders";
 import { getUserTimezone } from "../db/users";
+import { correctRemindAt } from "../utils/time";
 
 const mockParseReminder = parseReminder as jest.MockedFunction<typeof parseReminder>;
 const mockEncrypt = encrypt as jest.MockedFunction<typeof encrypt>;
@@ -20,6 +22,7 @@ const mockUpsertUser = upsertUser as jest.MockedFunction<typeof upsertUser>;
 const mockSaveReminder = saveReminder as jest.MockedFunction<typeof saveReminder>;
 const mockUpsertReminderByMsgId = upsertReminderByMsgId as jest.MockedFunction<typeof upsertReminderByMsgId>;
 const mockGetUserTimezone = getUserTimezone as jest.MockedFunction<typeof getUserTimezone>;
+const mockCorrectRemindAt = correctRemindAt as jest.MockedFunction<typeof correctRemindAt>;
 
 // ── Context factory ──────────────────────────────────────────────────────────
 
@@ -52,6 +55,7 @@ function makeCtx(
       reply_to_message: replyToMessage,
     },
     session,
+    t: jest.fn().mockReturnValue("noted your task, please set city"),
     react: jest.fn().mockResolvedValue(undefined),
     reply: jest.fn().mockResolvedValue(undefined),
   } as unknown as Parameters<typeof handleNewMessage>[0];
@@ -65,14 +69,15 @@ beforeEach(() => {
   mockUpsertUser.mockResolvedValue(undefined);
   mockSaveReminder.mockResolvedValue(undefined);
   mockUpsertReminderByMsgId.mockResolvedValue(undefined);
-  mockGetUserTimezone.mockResolvedValue("Europe/Kyiv"); // timezone set by default
+  mockGetUserTimezone.mockResolvedValue("Europe/Kyiv");
+  mockCorrectRemindAt.mockImplementation((iso) => new Date(iso));
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("handleNewMessage", () => {
   test("AI does not recognise a reminder — no DB write, no reaction", async () => {
-    mockParseReminder.mockResolvedValue({ is_reminder: false });
+    mockParseReminder.mockResolvedValue([]);
 
     const ctx = makeCtx("Hello there!");
     await handleNewMessage(ctx);
@@ -83,11 +88,9 @@ describe("handleNewMessage", () => {
   });
 
   test("AI recognises reminder and timezone is set — saves to DB and reacts", async () => {
-    mockParseReminder.mockResolvedValue({
-      is_reminder: true,
-      intent: "Buy milk",
-      remind_at: "2025-06-01T09:00:00+00:00",
-    });
+    mockParseReminder.mockResolvedValue([
+      { intent: "Buy milk", remind_at: "2025-06-01T09:00:00+00:00" },
+    ]);
 
     const ctx = makeCtx("Buy milk tomorrow morning", { userId: 42, messageId: 101 });
     await handleNewMessage(ctx);
@@ -99,23 +102,36 @@ describe("handleNewMessage", () => {
     expect(ctx.reply).not.toHaveBeenCalled();
   });
 
-  test("AI recognises reminder but timezone is missing — parks task in session and prompts for city", async () => {
+  test("AI recognises multiple reminders — saves all to DB and reacts once", async () => {
+    mockParseReminder.mockResolvedValue([
+      { intent: "Call brother", remind_at: "2025-06-01T17:00:00+00:00" },
+      { intent: "Check email", remind_at: "2025-06-01T21:00:00+00:00" },
+      { intent: "Zoom call", remind_at: "2025-06-01T12:00:00+00:00" },
+    ]);
+
+    const ctx = makeCtx("нагадай о 17 набрати брату, ввечері переглянути імейл, в обід zoom call", { userId: 42, messageId: 102 });
+    await handleNewMessage(ctx);
+
+    expect(mockSaveReminder).toHaveBeenCalledTimes(3);
+    expect(ctx.react).toHaveBeenCalledTimes(1);
+    expect(ctx.react).toHaveBeenCalledWith("👍");
+  });
+
+  test("AI recognises reminder but timezone is missing — parks tasks in session and prompts for city", async () => {
     mockGetUserTimezone.mockResolvedValue(null);
-    mockParseReminder.mockResolvedValue({
-      is_reminder: true,
-      intent: "Call dentist",
-      remind_at: "2025-06-02T10:00:00+00:00",
-    });
+    mockParseReminder.mockResolvedValue([
+      { intent: "Call dentist", remind_at: "2025-06-02T10:00:00+00:00" },
+    ]);
 
     const ctx = makeCtx("Call dentist tomorrow", { userId: 42, messageId: 55 });
     await handleNewMessage(ctx);
 
-    // Task must be parked in session
-    expect(ctx.session.pendingTask).toEqual({
+    // Tasks must be parked in session
+    expect(ctx.session.pendingTasks).toEqual([{
       intent: "Call dentist",
       remindAt: "2025-06-02T10:00:00+00:00",
       msgId: 55,
-    });
+    }]);
 
     // Friendly message + Set City button sent
     expect(ctx.reply).toHaveBeenCalledWith(
@@ -141,11 +157,9 @@ describe("handleNewMessage", () => {
 
 describe("handleReply", () => {
   test("user replies to own message and AI recognises reminder — upserts DB entry and reacts", async () => {
-    mockParseReminder.mockResolvedValue({
-      is_reminder: true,
-      intent: "Call the dentist",
-      remind_at: "2025-06-02T10:00:00+00:00",
-    });
+    mockParseReminder.mockResolvedValue([
+      { intent: "Call the dentist", remind_at: "2025-06-02T10:00:00+00:00" },
+    ]);
 
     const ctx = makeCtx("actually remind me at 10am", {
       userId: 42,
@@ -163,7 +177,7 @@ describe("handleReply", () => {
   });
 
   test("user replies to own message and AI does not recognise reminder — no DB write, no reaction", async () => {
-    mockParseReminder.mockResolvedValue({ is_reminder: false });
+    mockParseReminder.mockResolvedValue([]);
 
     const ctx = makeCtx("never mind", {
       userId: 42,

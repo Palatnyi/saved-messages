@@ -1,40 +1,42 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Anthropic from "@anthropic-ai/sdk";
 
-export interface ReminderResult {
-  is_reminder: true;
+export interface ReminderItem {
   intent: string;
-  remind_at: string; // ISO 8601
+  remind_at: string | null; // ISO 8601 or null
 }
 
-export interface NotReminderResult {
-  is_reminder: false;
-}
+const SYSTEM_PROMPT = `You are a reminder parser. The user may send a message containing one or more reminders.
 
-export type AIResult = ReminderResult | NotReminderResult;
+Extract ALL actionable tasks, appointments, to-dos, or things to remember from the message.
 
-const SYSTEM_PROMPT = `You are a reminder parser. The user will send you a message. 
-Your job is to decide whether it expresses something the user wants to remember or do.
-
-Classification rules:
-- is_reminder: TRUE — any actionable task, to-do, or thing to remember (e.g., "buy milk", "call mom", "remind me to pay the bill").
-- is_reminder: FALSE — greetings, questions, random thoughts, facts, or casual conversation (e.g., "hello", "what time is it?", "I love pizza").
+Classification:
+- Include: any task, appointment, to-do, or thing to do/remember (e.g., "buy milk", "call mom", "zoom call at noon").
+- Exclude: greetings, questions, random thoughts, casual conversation.
 
 Time resolution rules:
-1. Explicit/Relative time given → resolve it against the provided current datetime and return a full ISO 8601 string.
-2. No time mentioned → if the user doesn't specify WHEN to do the task, set "remind_at" to null. Do NOT infer or guess a default time.
+1. Explicit or relative time given → resolve it against the provided current datetime and return a full ISO 8601 string with timezone offset.
+2. No time mentioned → set "remind_at" to null. Do NOT guess a default time.
 
-Output rules:
-- remind_at: A full ISO 8601 string (with timezone offset) OR null if no time was mentioned.
-- intent: A short, clean action phrase. Remove all datetime-related words and filler words. Write it in the same language as the user's message.
-- Respond ONLY with a JSON object. No markdown, no code fences, no explanation.
+Output: A JSON array. Each element represents one reminder:
+- "intent": a concise action phrase — maximum 6 words, same language as the user. Strip all datetime words, filler, explanations, and context. Distil the core action only.
+- "remind_at": ISO 8601 string with offset, or null.
 
-Current datetime: {{current_datetime}} (Use this to resolve "tomorrow", "next Friday", etc.)
+If no reminders found, return [].
+Respond ONLY with a valid JSON array. No markdown, no code fences, no explanation.
 
-Examples:
-{"is_reminder":true,"intent":"Buy milk","remind_at":null}
-{"is_reminder":true,"intent":"Call mom","remind_at":"2026-04-05T09:00:00+03:00"}
-{"is_reminder":false}`
+Current datetime: {{current_datetime}} (Use this to resolve "tomorrow", "tonight", "next Friday", etc.)
+
+Examples (note how verbose speech is compressed):
+Input: "нагадай мені завтра о 5 вечора зателефонувати братові бо він просив обговорити справи по роботі"
+Output: [{"intent":"Зателефонувати братові","remind_at":"2026-04-29T17:00:00+03:00"}]
+
+Input: "remind me at noon to call the bank about my credit card issue that I've been putting off"
+Output: [{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00"}]
+
+[{"intent":"Call brother","remind_at":"2026-04-28T17:00:00+03:00"},{"intent":"Check email","remind_at":"2026-04-28T21:00:00+03:00"}]
+[{"intent":"Buy milk","remind_at":null}]
+[]`
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-haiku-4-5-20251001";
@@ -60,17 +62,19 @@ function getAnthropicClient(): Anthropic {
   return _anthropicClient;
 }
 
-function parseAIResponse(raw: string): AIResult {
+function parseAIResponse(raw: string): ReminderItem[] {
   try {
-    return JSON.parse(raw) as AIResult;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as ReminderItem[];
+    return [];
   } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]) as AIResult;
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]) as ReminderItem[];
     throw new Error(`Unparseable AI response: ${raw}`);
   }
 }
 
-async function parseReminderWithGemini(userContent: string, nowIso: string): Promise<AIResult> {
+async function parseReminderWithGemini(userContent: string, nowIso: string): Promise<ReminderItem[]> {
   return callWithRetry("Gemini/parseReminder", async () => {
     const model = getGeminiClient().getGenerativeModel({
       model: GEMINI_MODEL,
@@ -123,11 +127,11 @@ async function callWithRetry<T>(
   throw new Error("Unreachable");
 }
 
-async function parseReminderWithClaude(userContent: string, nowIso: string): Promise<AIResult> {
+async function parseReminderWithClaude(userContent: string, nowIso: string): Promise<ReminderItem[]> {
   return callWithRetry("Claude/parseReminder", async () => {
     const message = await getAnthropicClient().messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 256,
+      max_tokens: 512,
       system: SYSTEM_PROMPT,
       messages: [
         { role: "user", content: `Current datetime: ${nowIso}\n${userContent}` },
@@ -145,7 +149,7 @@ export async function parseReminder(
   text: string,
   nowIso: string,
   replyToText?: string
-): Promise<AIResult> {
+): Promise<ReminderItem[]> {
   const userContent = replyToText
     ? `Original message: ${replyToText}\nFollow-up reply: ${text}`
     : `User message: ${text}`;
@@ -157,6 +161,7 @@ export async function parseReminder(
     return await parseReminderWithClaude(userContent, nowIso);
   }
 }
+
 
 const CITY_SYTEM_PROPT = `
 "You are a geographic assistant. Your goal is to identify a city from any text provided by the user (even with typos or in any language) and return its standard English name and IANA Timezone ID.

@@ -113,12 +113,14 @@ export async function onboardingConversation(
       await upsertUser(userId, username);
       await setUserTimezone(userId, timezone, city);
 
-      const pending = outerCtx.session.pendingTask;
-      if (pending) {
-        const encryptedPayload = encrypt(pending.intent);
-        const remindAt = correctRemindAt(pending.remindAt, timezone);
-        await saveReminder(userId, encryptedPayload, remindAt, pending.msgId);
-        delete outerCtx.session.pendingTask;
+      const pending = outerCtx.session.pendingTasks;
+      if (pending?.length) {
+        for (const task of pending) {
+          const encryptedPayload = encrypt(task.intent);
+          const remindAt = correctRemindAt(task.remindAt, timezone);
+          await saveReminder(userId, encryptedPayload, remindAt, task.msgId);
+        }
+        delete outerCtx.session.pendingTasks;
       }
     });
 
