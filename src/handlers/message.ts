@@ -160,6 +160,22 @@ async function processMessage(
     }
 
     await ctx.react("👍");
+    const highlightKeys = new Set(
+      withTime.map((r) => {
+        const dateKey = DateTime.fromISO(r.remind_at!, { zone: timezone }).toFormat("yyyy-MM-dd");
+        return `${r.intent}\0${dateKey}`;
+      })
+    );
+    const savedDates = new Set([...highlightKeys].map((k) => k.split("\0")[1]));
+    const allReminders = await getPendingReminders(userId);
+    const relevantReminders = allReminders.filter((r) =>
+      savedDates.has(DateTime.fromJSDate(r.remindAt).setZone(timezone).toFormat("yyyy-MM-dd"))
+    );
+    const languageCode = await getLanguageCode(ctx, userId);
+    const locale = languageCode ?? "en";
+    const emoji = FRIENDLY_EMOJIS[Math.floor(Math.random() * FRIENDLY_EMOJIS.length)];
+    const { text } = buildRemindersMessage(relevantReminders, timezone, locale, false, highlightKeys);
+    await ctx.reply(`${emoji}\n\n${text}`, { parse_mode: "Markdown" });
   } catch (err) {
     console.error("[reminder] failed to save:", err);
   }
@@ -180,7 +196,9 @@ function toStoredRecurrence(
 function buildRemindersMessage(
   reminders: Awaited<ReturnType<typeof getPendingReminders>>,
   zone: string,
-  locale: string
+  locale: string,
+  withDeleteButtons = true,
+  highlightKeys: Set<string> = new Set()
 ): { text: string; keyboard: InlineKeyboard } {
   const groups = new Map<string, typeof reminders>();
   for (const r of reminders) {
@@ -198,8 +216,9 @@ function buildRemindersMessage(
     for (const r of dayReminders) {
       const intent = decrypt(r.encryptedPayload);
       const time = DateTime.fromJSDate(r.remindAt).setZone(zone).toFormat("HH:mm");
-      lines.push(`• ${intent} — ${time}`);
-      keyboard.text(`🗑 ${intent}`, `del_rem:${r._id.toHexString()}`).row();
+      const isNew = highlightKeys.has(`${intent}\0${dateKey}`);
+      lines.push(isNew ? `• *${intent} — ${time}*` : `• ${intent} — ${time}`);
+      if (withDeleteButtons) keyboard.text(`🗑 ${intent}`, `del_rem:${r._id.toHexString()}`).row();
     }
     lines.push("");
   }
@@ -226,10 +245,7 @@ export async function handleListMessages(ctx: MyContext, userId: number): Promis
   const { text, keyboard } = buildRemindersMessage(reminders, zone, locale);
 
   const emoji = FRIENDLY_EMOJIS[Math.floor(Math.random() * FRIENDLY_EMOJIS.length)];
-  const today = DateTime.now().setZone(zone).setLocale(locale).toFormat("cccc, d MMM yyyy");
-  const header = `${emoji} *${today}*\n\n`;
-
-  await ctx.reply(header + text, { reply_markup: keyboard, parse_mode: "Markdown" });
+  await ctx.reply(`${emoji}\n\n${text}`, { reply_markup: keyboard, parse_mode: "Markdown" });
 }
 
 export async function handleDeleteReminder(ctx: MyContext): Promise<void> {

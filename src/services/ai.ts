@@ -37,7 +37,7 @@ D) Neither (casual chat, questions, greetings)
 Extract ALL tasks/appointments the user wants to be reminded of.
 Each reminder:
 - "intent": max 6 words, same language as user, no datetime words. Distil core action only.
-- "remind_at": ISO 8601 with timezone offset for the FIRST occurrence, or null if no time given.
+- "remind_at": ISO 8601 with timezone offset for the FIRST occurrence. If user gives a date but no time, default to 07:00:00. Set null only when no date is given at all.
 - "recurrence": null for one-time reminders. For recurring patterns:
     {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"until":"YYYY-MM-DD"|null}
     freq = base unit, interval = every N units (default 1), until = end date or null if open-ended.
@@ -66,6 +66,7 @@ Current datetime: {{current_datetime}}
 Examples:
 "нагадай завтра о 17 зателефонувати брату" → {"action":"remind","items":[{"intent":"Зателефонувати брату","remind_at":"2026-04-29T17:00:00+03:00","recurrence":null}]}
 "remind me at noon to call the bank about my credit card issue" → {"action":"remind","items":[{"intent":"Call the bank","remind_at":"2026-04-28T12:00:00+03:00","recurrence":null}]}
+"нагадай завтра купити молоко" → {"action":"remind","items":[{"intent":"Купити молоко","remind_at":"2026-04-29T07:00:00+03:00","recurrence":null}]}
 "нагадуй кожного місяця сплачувати податки" → {"action":"remind","items":[{"intent":"Сплачувати податки","remind_at":null,"recurrence":{"freq":"monthly","interval":1,"until":null}}]}
 "нагадуй щодня о 9:00 робити зарядку до кінця травня" → {"action":"remind","items":[{"intent":"Зарядка","remind_at":"2026-04-28T09:00:00+03:00","recurrence":{"freq":"daily","interval":1,"until":"2026-05-31"}}]}
 "remind me every 2 weeks to submit a report" → {"action":"remind","items":[{"intent":"Submit report","remind_at":null,"recurrence":{"freq":"weekly","interval":2,"until":null}}]}
